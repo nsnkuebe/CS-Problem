@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Critical Section Simulator</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:       #0a0c0f;
+  --bg2:      #111418;
+  --bg3:      #181c22;
+  --border:   #1e2530;
+  --border2:  #2a3340;
+  --text:     #c8d4e0;
+  --text2:    #6b7f94;
+  --text3:    #3d4f61;
+  --green:    #00e5a0;
+  --green-d:  #00a370;
+  --green-bg: rgba(0,229,160,0.07);
+  --amber:    #f5a623;
+  --amber-d:  #b07318;
+  --amber-bg: rgba(245,166,35,0.07);
+  --blue:     #4da6ff;
+  --blue-d:   #2269b0;
+  --blue-bg:  rgba(77,166,255,0.07);
+  --red:      #ff5c5c;
+  --red-d:    #a03030;
+  --red-bg:   rgba(255,92,92,0.07);
+  --purple:   #b48eff;
+  --purple-d: #7050b0;
+  --cyan:     #40e0d0;
+  --mono:     'JetBrains Mono', monospace;
+  --sans:     'Space Grotesk', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow-x: hidden; }
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+}
+
+/* ── Layout ── */
+.shell { display: grid; grid-template-rows: 48px 1fr; min-height: 100vh; }
+
+/* ── Topbar ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; border-bottom: 1px solid var(--border);
+  background: var(--bg2); position: sticky; top: 0; z-index: 10;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; }
+.logo { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--green); letter-spacing: 0.05em; }
+.logo span { color: var(--text2); font-weight: 300; }
+.badge { font-family: var(--mono); font-size: 10px; padding: 2px 8px; border-radius: 3px; border: 1px solid; }
+.badge.algo { border-color: var(--blue-d); color: var(--blue); background: var(--blue-bg); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text3); transition: background 0.3s; }
+.status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+.topbar-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--text2); font-family: var(--mono); }
+.conn-label { color: var(--text3); }
+.conn-label.ok { color: var(--green); }
+
+/* ── Main grid ── */
+.main { display: grid; grid-template-columns: 260px 1fr 240px; gap: 0; height: calc(100vh - 48px); overflow: hidden; }
+
+/* ── Sidebar ── */
+.sidebar { border-right: 1px solid var(--border); background: var(--bg2); padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+.section-title { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
+
+/* Controls */
+.ctrl-group { display: flex; flex-direction: column; gap: 8px; }
+.btn { width: 100%; padding: 9px 14px; border-radius: 6px; font-family: var(--mono); font-size: 12px; font-weight: 500; cursor: pointer; border: 1px solid; transition: all 0.15s; letter-spacing: 0.04em; }
+.btn-start { background: var(--green-bg); border-color: var(--green-d); color: var(--green); }
+.btn-start:hover { background: rgba(0,229,160,0.15); }
+.btn-start.paused { background: var(--amber-bg); border-color: var(--amber-d); color: var(--amber); }
+.btn-reset { background: transparent; border-color: var(--border2); color: var(--text2); }
+.btn-reset:hover { border-color: var(--red-d); color: var(--red); background: var(--red-bg); }
+
+.slider-row { display: flex; flex-direction: column; gap: 5px; }
+.slider-label { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--text2); }
+.slider-label span { color: var(--text); font-weight: 500; }
+input[type=range] { width: 100%; accent-color: var(--green); }
+
+/* Stats panel */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 10px 10px 8px; }
+.stat-card .label { font-family: var(--mono); font-size: 9px; color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase; }
+.stat-card .value { font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.1; margin-top: 2px; }
+.stat-card .value.green { color: var(--green); }
+.stat-card .value.red   { color: var(--red); }
+
+/* Algorithm legend */
+.legend-list { display: flex; flex-direction: column; gap: 6px; }
+.leg { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text2); }
+.leg-pip { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+
+/* ── Centre stage ── */
+.stage { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+/* CS Box */
+.cs-container { border: 1px solid var(--border2); border-radius: 10px; background: var(--bg2); overflow: hidden; }
+.cs-header { padding: 8px 16px; background: var(--bg3); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.cs-header-label { font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase; flex: 1; }
+.cs-body { padding: 20px; display: flex; align-items: center; justify-content: center; min-height: 90px; }
+.cs-empty { font-family: var(--mono); font-size: 13px; color: var(--text3); }
+.cs-occupied { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.cs-pid { font-family: var(--mono); font-size: 36px; font-weight: 700; color: var(--green); text-shadow: 0 0 20px rgba(0,229,160,0.4); }
+.cs-sub { font-family: var(--mono); font-size: 11px; color: var(--green-d); }
+.cs-bar { height: 3px; background: var(--border); border-radius: 2px; width: 100%; overflow: hidden; }
+.cs-bar-fill { height: 100%; background: linear-gradient(90deg, var(--green-d), var(--green)); border-radius: 2px; transition: width 0.2s linear; }
+
+/* Process grid */
+.proc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 10px; }
+.proc-card {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; transition: border-color 0.2s, box-shadow 0.2s;
+  position: relative; overflow: hidden;
+}
+.proc-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--track-color, var(--border)); transition: background 0.2s;
+}
+.proc-card.state-running  { border-color: var(--green-d); box-shadow: 0 0 16px rgba(0,229,160,0.1); --track-color: var(--green); }
+.proc-card.state-waiting  { border-color: var(--amber-d); --track-color: var(--amber); }
+.proc-card.state-choosing { border-color: var(--blue-d);  --track-color: var(--blue); }
+.proc-card.state-leaving  { border-color: var(--cyan);    --track-color: var(--cyan); }
+.proc-card.state-idle     { border-color: var(--border); }
+
+.pc-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.pc-id { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+.pc-pill { font-family: var(--mono); font-size: 9px; padding: 2px 6px; border-radius: 3px; border: 1px solid; }
+
+.pc-ticket { font-family: var(--mono); font-size: 30px; font-weight: 700; text-align: center; color: var(--text); margin: 4px 0; line-height: 1; }
+.pc-ticket.active { color: var(--amber); text-shadow: 0 0 12px rgba(245,166,35,0.3); }
+.pc-ticket.running { color: var(--green); text-shadow: 0 0 12px rgba(0,229,160,0.4); }
+
+.pc-state { font-family: var(--mono); font-size: 10px; color: var(--text3); text-align: center; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.06em; }
+.pc-count { font-family: var(--mono); font-size: 10px; color: var(--text3); text-align: center; }
+.pc-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.pc-bar-fill { height: 100%; border-radius: 2px; transition: width 0.2s, background 0.2s; }
+
+/* ── Log panel ── */
+.logpanel { border-left: 1px solid var(--border); background: var(--bg2); display: flex; flex-direction: column; overflow: hidden; }
+.log-header { padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg3); font-family: var(--mono); font-size: 10px; color: var(--text3); letter-spacing: 0.1em; text-transform: uppercase; display: flex; align-items: center; gap: 6px; }
+.log-scroll { flex: 1; overflow-y: auto; padding: 8px 0; }
+.log-scroll::-webkit-scrollbar { width: 4px; }
+.log-scroll::-webkit-scrollbar-track { background: transparent; }
+.log-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+.log-entry { padding: 4px 14px; font-family: var(--mono); font-size: 11px; line-height: 1.5; border-bottom: 1px solid transparent; }
+.log-entry.enter { color: var(--green); background: var(--green-bg); }
+.log-entry.exit  { color: var(--blue); background: var(--blue-bg); }
+.log-entry.wait  { color: var(--amber); }
+.log-entry.info  { color: var(--text3); }
+.log-entry .tick { color: var(--text3); margin-right: 6px; font-size: 10px; }
+
+/* Choosing animation */
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+.choosing-anim { animation: blink 0.6s ease-in-out infinite; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+  .sidebar, .logpanel { border: none; border-bottom: 1px solid var(--border); }
+  .logpanel { max-height: 200px; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="logo">MUTEX<span>/sim</span></div>
+      <div class="badge algo">Lamport's Bakery</div>
+    </div>
+    <div class="topbar-right">
+      <span class="conn-label" id="connLabel">connecting…</span>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- Left sidebar: controls + stats -->
+    <aside class="sidebar">
+      <div>
+        <div class="section-title">Simulation</div>
+        <div class="ctrl-group">
+          <button class="btn btn-start" id="startBtn" onclick="toggleSim()">▶ START</button>
+          <button class="btn btn-reset" onclick="resetSim()">↺ RESET</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">Parameters</div>
+        <div class="slider-row">
+          <div class="slider-label">Processes <span id="nVal">4</span></div>
+          <input type="range" min="2" max="6" value="4" id="nSlider" oninput="setN(this.value)"/>
+        </div>
+        <div class="slider-row" style="margin-top:10px">
+          <div class="slider-label">Speed <span id="speedVal">3×</span></div>
+          <input type="range" min="1" max="8" value="3" id="speedSlider" oninput="setSpeed(this.value)"/>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">Metrics</div>
+        <div class="stat-grid">
+          <div class="stat-card"><div class="label">Ticks</div><div class="value" id="sTicks">0</div></div>
+          <div class="stat-card"><div class="label">Entries</div><div class="value green" id="sEntries">0</div></div>
+          <div class="stat-card" style="grid-column:1/-1"><div class="label">Mutual Exclusion Violations</div><div class="value red" id="sViol">0</div></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">State Legend</div>
+        <div class="legend-list">
+          <div class="leg"><div class="leg-pip" style="background:var(--green)"></div>In critical section</div>
+          <div class="leg"><div class="leg-pip" style="background:var(--amber)"></div>Waiting (has ticket)</div>
+          <div class="leg"><div class="leg-pip" style="background:var(--blue)"></div>Choosing ticket</div>
+          <div class="leg"><div class="leg-pip" style="background:var(--cyan)"></div>Leaving / exiting</div>
+          <div class="leg"><div class="leg-pip" style="background:var(--border2)"></div>Idle</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">Algorithm</div>
+        <div style="font-size:11px;color:var(--text2);line-height:1.7;">
+          Each process picks <b style="color:var(--amber)">ticket = max + 1</b>.<br/>
+          Lowest ticket enters CS.<br/>
+          Ties broken by process ID.<br/>
+          Guarantees <b style="color:var(--green)">mutual exclusion</b>, progress &amp; bounded waiting.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Centre: CS box + process cards -->
+    <section class="stage">
+      <div>
+        <div class="section-title">Critical Section</div>
+        <div class="cs-container">
+          <div class="cs-header">
+            <div class="cs-header-label">Shared Resource</div>
+            <div class="cs-bar" style="width:120px"><div class="cs-bar-fill" id="csBarFill" style="width:0%"></div></div>
+          </div>
+          <div class="cs-body" id="csBody">
+            <div class="cs-empty">— no process in critical section —</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-title">Processes</div>
+        <div class="proc-grid" id="procGrid"></div>
+      </div>
+    </section>
+
+    <!-- Right: event log -->
+    <aside class="logpanel">
+      <div class="log-header">
+        <span>Event Log</span>
+        <span id="logCount" style="margin-left:auto;color:var(--text3)">0 events</span>
+      </div>
+      <div class="log-scroll" id="logScroll"></div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+const P_COLORS = ['#00e5a0','#4da6ff','#f5a623','#ff5c5c','#b48eff','#40e0d0'];
+const P_LABELS = ['state-running','state-waiting','state-choosing','state-leaving','state-idle'];
+let ws, running = false, csTimerMax = 12, csProgress = 0;
+let lastState = null;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById('connLabel').textContent = 'connected';
+    document.getElementById('connLabel').classList.add('ok');
+    document.getElementById('statusDot').classList.add('live');
+  };
+
+  ws.onclose = () => {
+    document.getElementById('connLabel').textContent = 'disconnected';
+    document.getElementById('connLabel').classList.remove('ok');
+    document.getElementById('statusDot').classList.remove('live');
+    setTimeout(connect, 2000);
+  };
+
+  ws.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.type === 'state') renderState(d);
+  };
+}
+
+function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
+
+function toggleSim() {
+  running = !running;
+  const btn = document.getElementById('startBtn');
+  if (running) {
+    btn.textContent = '⏸ PAUSE';
+    btn.classList.add('paused');
+    send({ cmd: 'start' });
+  } else {
+    btn.textContent = '▶ START';
+    btn.classList.remove('paused');
+    send({ cmd: 'pause' });
+  }
+}
+
+function resetSim() {
+  running = false;
+  document.getElementById('startBtn').textContent = '▶ START';
+  document.getElementById('startBtn').classList.remove('paused');
+  send({ cmd: 'reset', n: parseInt(document.getElementById('nSlider').value) });
+}
+
+function setN(v) {
+  document.getElementById('nVal').textContent = v;
+  running = false;
+  document.getElementById('startBtn').textContent = '▶ START';
+  document.getElementById('startBtn').classList.remove('paused');
+  send({ cmd: 'set_n', n: parseInt(v) });
+}
+
+function setSpeed(v) {
+  document.getElementById('speedVal').textContent = v + '×';
+  send({ cmd: 'set_speed', speed: parseInt(v) });
+}
+
+function renderState(d) {
+  lastState = d;
+  // Stats
+  document.getElementById('sTicks').textContent = d.ticks;
+  document.getElementById('sEntries').textContent = d.entries;
+  document.getElementById('sViol').textContent = d.violations;
+
+  // CS box
+  const csBody = document.getElementById('csBody');
+  const csBar  = document.getElementById('csBarFill');
+  if (d.in_cs >= 0) {
+    const i = d.in_cs;
+    const col = P_COLORS[i % P_COLORS.length];
+    const progress = Math.max(0, Math.round((1 - d.p_timer[i] / csTimerMax) * 100));
+    csBody.innerHTML = `
+      <div class="cs-occupied">
+        <div class="cs-pid" style="color:${col};text-shadow:0 0 24px ${col}40">P${i}</div>
+        <div class="cs-sub" style="color:${col}99">ticket #${d.ticket[i]} &nbsp;|&nbsp; ${d.p_cs_count[i]} entries</div>
+      </div>`;
+    csBar.style.width = progress + '%';
+    csBar.style.background = `linear-gradient(90deg, ${col}60, ${col})`;
+  } else {
+    csBody.innerHTML = '<div class="cs-empty">— no process in critical section —</div>';
+    csBar.style.width = '0%';
+  }
+
+  // Process cards
+  const grid = document.getElementById('procGrid');
+  const n = d.n;
+  // rebuild only if count changed
+  if (grid.children.length !== n) {
+    grid.innerHTML = '';
+    for (let i = 0; i < n; i++) {
+      const card = document.createElement('div');
+      card.id = 'pc' + i;
+      grid.appendChild(card);
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    const card = document.getElementById('pc' + i);
+    const s = d.p_state[i];
+    const col = P_COLORS[i % P_COLORS.length];
+    const t = d.ticket[i];
+
+    const stateClass = {running:'state-running',waiting:'state-waiting',choosing:'state-choosing',leaving:'state-leaving',idle:'state-idle'}[s] || 'state-idle';
+    const pillStyle = {
+      running: `border-color:#00a370;color:#00e5a0;background:rgba(0,229,160,0.1)`,
+      waiting: `border-color:#b07318;color:#f5a623;background:rgba(245,166,35,0.1)`,
+      choosing:`border-color:#2269b0;color:#4da6ff;background:rgba(77,166,255,0.1)`,
+      leaving: `border-color:#2a9090;color:#40e0d0;background:rgba(64,224,208,0.1)`,
+      idle:    `border-color:#2a3340;color:#3d4f61;background:transparent`,
+    }[s];
+    const ticketClass = s==='running'?'running':t?'active':'';
+    const barColor = {running:'var(--green)',waiting:'var(--amber)',choosing:'var(--blue)',leaving:'var(--cyan)',idle:'var(--border2)'}[s];
+    const barW = s==='running' ? Math.max(0,Math.round((1 - d.p_timer[i]/csTimerMax)*100)) : s==='waiting'?50:s==='choosing'?75:s==='leaving'?20:0;
+    const stateText = {idle:'IDLE',choosing:'CHOOSING',waiting:'WAITING',running:'IN CS',leaving:'LEAVING'}[s]||s;
+    const choosingClass = s==='choosing'?'choosing-anim':'';
+
+    card.className = `proc-card ${stateClass}`;
+    card.innerHTML = `
+      <div class="pc-header">
+        <div class="pc-id" style="color:${col}">P${i}</div>
+        <div class="pc-pill" style="${pillStyle}">${stateText}</div>
+      </div>
+      <div class="pc-ticket ${ticketClass} ${choosingClass}">${t || '—'}</div>
+      <div class="pc-state">${t ? 'ticket #'+t : 'no ticket'}</div>
+      <div class="pc-count">${d.p_cs_count[i]} entries</div>
+      <div class="pc-bar"><div class="pc-bar-fill" style="width:${barW}%;background:${barColor}"></div></div>`;
+  }
+
+  // Log
+  const scroll = document.getElementById('logScroll');
+  const logCount = document.getElementById('logCount');
+  if (d.log && d.log.length) {
+    // Only add new entries
+    const lastTick = scroll.dataset.lastTick ? parseInt(scroll.dataset.lastTick) : -1;
+    const newEntries = d.log.filter(l => l.tick > lastTick);
+    if (newEntries.length) {
+      scroll.dataset.lastTick = d.log[d.log.length-1].tick;
+      newEntries.forEach(l => {
+        const div = document.createElement('div');
+        div.className = 'log-entry ' + l.kind;
+        div.innerHTML = `<span class="tick">[${String(l.tick).padStart(4,'0')}]</span>${l.msg}`;
+        scroll.insertBefore(div, scroll.firstChild);
+      });
+      while (scroll.children.length > 80) scroll.removeChild(scroll.lastChild);
+      logCount.textContent = scroll.children.length + ' events';
+    }
+  }
+}
+
+connect();
+</script>
+</body>
+</html>
